@@ -8,11 +8,13 @@ from copy import deepcopy
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from typing import Optional
+import json
 
 import cv2
 import numpy as np
 import psutil
 from torch.utils.data import Dataset
+from .file_list import FilesList
 
 from ultralytics.data.utils import FORMATS_HELP_MSG, HELP_URL, IMG_FORMATS
 from ultralytics.utils import DEFAULT_CFG, LOCAL_RANK, LOGGER, NUM_THREADS, TQDM
@@ -64,13 +66,12 @@ class BaseDataset(Dataset):
     ):
         """Initialize BaseDataset with given configuration and options."""
         super().__init__()
-        self.img_path = img_path
         self.imgsz = imgsz
         self.augment = augment
         self.single_cls = single_cls
         self.prefix = prefix
         self.fraction = fraction
-        self.im_files = self.get_img_files(self.img_path)
+
         self.labels = self.get_labels()
         self.update_labels(include_class=classes)  # single_cls and include_class
         self.ni = len(self.labels)  # number of images
@@ -88,7 +89,7 @@ class BaseDataset(Dataset):
 
         # Cache images (options are cache = True, False, None, "ram", "disk")
         self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
-        self.npy_files = [Path(f).with_suffix(".npy") for f in self.im_files]
+        self.npy_files = []
         self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
         if (self.cache == "ram" and self.check_cache_ram()) or self.cache == "disk":
             self.cache_images()
@@ -96,31 +97,31 @@ class BaseDataset(Dataset):
         # Transforms
         self.transforms = self.build_transforms(hyp=hyp)
 
-    def get_img_files(self, img_path):
-        """Read image files."""
-        try:
-            f = []  # image files
-            for p in img_path if isinstance(img_path, list) else [img_path]:
-                p = Path(p)  # os-agnostic
-                if p.is_dir():  # dir
-                    f += glob.glob(str(p / "**" / "*.*"), recursive=True)
-                    # F = list(p.rglob('*.*'))  # pathlib
-                elif p.is_file():  # file
-                    with open(p) as t:
-                        t = t.read().strip().splitlines()
-                        parent = str(p.parent) + os.sep
-                        f += [x.replace("./", parent) if x.startswith("./") else x for x in t]  # local to global path
-                        # F += [p.parent / x.lstrip(os.sep) for x in t]  # local to global path (pathlib)
-                else:
-                    raise FileNotFoundError(f"{self.prefix}{p} does not exist")
-            im_files = sorted(x.replace("/", os.sep) for x in f if x.split(".")[-1].lower() in IMG_FORMATS)
-            # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
-            assert im_files, f"{self.prefix}No images found in {img_path}. {FORMATS_HELP_MSG}"
-        except Exception as e:
-            raise FileNotFoundError(f"{self.prefix}Error loading data from {img_path}\n{HELP_URL}") from e
-        if self.fraction < 1:
-            im_files = im_files[: round(len(im_files) * self.fraction)]  # retain a fraction of the dataset
-        return im_files
+    # def get_img_files(self, img_path):
+    #     """Read image files."""
+    #     try:
+    #         f = []  # image files
+    #         for p in img_path if isinstance(img_path, list) else [img_path]:
+    #             p = Path(p)  # os-agnostic
+    #             if p.is_dir():  # dir
+    #                 f += glob.glob(str(p / "**" / "*.*"), recursive=True)
+    #                 # F = list(p.rglob('*.*'))  # pathlib
+    #             elif p.is_file():  # file
+    #                 with open(p) as t:
+    #                     t = t.read().strip().splitlines()
+    #                     parent = str(p.parent) + os.sep
+    #                     f += [x.replace("./", parent) if x.startswith("./") else x for x in t]  # local to global path
+    #                     # F += [p.parent / x.lstrip(os.sep) for x in t]  # local to global path (pathlib)
+    #             else:
+    #                 raise FileNotFoundError(f"{self.prefix}{p} does not exist")
+    #         im_files = sorted(x.replace("/", os.sep) for x in f if x.split(".")[-1].lower() in IMG_FORMATS)
+    #         # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
+    #         assert im_files, f"{self.prefix}No images found in {img_path}. {FORMATS_HELP_MSG}"
+    #     except Exception as e:
+    #         raise FileNotFoundError(f"{self.prefix}Error loading data from {img_path}\n{HELP_URL}") from e
+    #     if self.fraction < 1:
+    #         im_files = im_files[: round(len(im_files) * self.fraction)]  # retain a fraction of the dataset
+    #     return im_files
 
     def update_labels(self, include_class: Optional[list]):
         """Update labels to include only these classes (optional)."""
@@ -141,19 +142,22 @@ class BaseDataset(Dataset):
             if self.single_cls:
                 self.labels[i]["cls"][:, 0] = 0
 
-    def load_image(self, i, rect_mode=True):
+    def load_image(self, i, rect_mode=True, augmented=False):
         """Loads 1 image from dataset index 'i', returns (im, resized hw)."""
-        im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
+        prefix = "augmented_set" if augmented else "images"
+        im, f = self.ims[i], \
+                    os.path.join(self.project_dir, prefix, self.im_files[i])
+                    # os.path.join(self.project_dir, prefix, self.im_files[i]+'temp')
         if im is None:  # not cached in RAM
-            if fn.exists():  # load npy
-                try:
-                    im = np.load(fn)
-                except Exception as e:
-                    LOGGER.warning(f"{self.prefix}WARNING ⚠️ Removing corrupt *.npy image file {fn} due to: {e}")
-                    Path(fn).unlink(missing_ok=True)
-                    im = cv2.imread(f)  # BGR
-            else:  # read image
-                im = cv2.imread(f)  # BGR
+            # if fn.exists():  # load npy
+            #     try:
+            #         im = np.load(fn)
+            #     except Exception as e:
+            #         LOGGER.warning(f"{self.prefix}WARNING ⚠️ Removing corrupt *.npy image file {fn} due to: {e}")
+            #         Path(fn).unlink(missing_ok=True)
+            #         im = cv2.imread(f)  # BGR
+            # else:  # read image
+            im = cv2.imread(f)  # BGR
             if im is None:
                 raise FileNotFoundError(f"Image Not Found {f}")
 
@@ -254,7 +258,7 @@ class BaseDataset(Dataset):
         """Get and return label information from the dataset."""
         label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
         label.pop("shape", None)  # shape is for rect, remove it
-        label["img"], label["ori_shape"], label["resized_shape"] = self.load_image(index)
+        label["img"], label["ori_shape"], label["resized_shape"] = self.load_image(index, augmented=self.labels[index]["augmented"])
         label["ratio_pad"] = (
             label["resized_shape"][0] / label["ori_shape"][0],
             label["resized_shape"][1] / label["ori_shape"][1],
