@@ -15,6 +15,7 @@ from tarfile import is_tarfile
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
+import pybboxes as pbx
 
 from ultralytics.nn.autobackend import check_class_names
 from ultralytics.utils import (
@@ -48,8 +49,12 @@ def img2label_paths(img_paths):
     return [sb.join(x.rsplit(sa, 1)).rsplit(".", 1)[0] + ".txt" for x in img_paths]
 
 
-def get_hash(paths):
+def get_hash(path):
     """Returns a single hash value of a list of paths (files or dirs)."""
+    paths = list()
+    for i, j in path:
+        paths.append(i)
+        paths.append(j)
     size = sum(os.path.getsize(p) for p in paths if os.path.exists(p))  # sizes
     h = hashlib.sha256(str(size).encode())  # hash sizes
     h.update("".join(paths).encode())  # hash paths
@@ -67,7 +72,6 @@ def exif_size(img: Image.Image):
                 if rotation in {6, 8}:  # rotation 270 or 90
                     s = s[1], s[0]
     return s
-
 
 def verify_image(args):
     """Verify one image."""
@@ -96,7 +100,7 @@ def verify_image(args):
 
 def verify_image_label(args):
     """Verify one image-label pair."""
-    im_file, lb_file, prefix, keypoint, num_cls, nkpt, ndim = args
+    (im_file, lb_file), prefix, keypoint, num_cls, nkpt, ndim = args
     # Number (missing, found, empty, corrupt), message, segments, keypoints
     nm, nf, ne, nc, msg, segments, keypoints = 0, 0, 0, 0, "", [], None
     try:
@@ -118,11 +122,17 @@ def verify_image_label(args):
         if os.path.isfile(lb_file):
             nf = 1  # label found
             with open(lb_file) as f:
-                lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
-                if any(len(x) > 6 for x in lb) and (not keypoint):  # is segment
-                    classes = np.array([x[0] for x in lb], dtype=np.float32)
-                    segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
+                lb = json.load(f)
+                # lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
+                if lb.get('segments', None) is not None and (not keypoint):  # is segment
+                    classes = np.array(lb['class_ids'], dtype=np.float32)
+                    segments = [np.array(lb['segments'], dtype=np.float32).reshape(-1, 2)]  # (cls, xy1...)
                     lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
+                iterator = zip(lb.pop('class_ids'), lb.pop('bboxes'))
+                lb = list()
+                for cls_id, bbox in iterator:
+                    bbox = list(pbx.convert_bbox(bbox, from_type="voc", to_type="yolo", image_size=im.size[:2]))
+                    lb.append([cls_id] + bbox)
                 lb = np.array(lb, dtype=np.float32)
             nl = len(lb)
             if nl:
@@ -276,7 +286,11 @@ def check_det_dataset(dataset, autodownload=True):
         extract_dir, autodownload = file.parent, False
 
     # Read YAML
-    data = yaml_load(file, append_filename=True)  # dictionary
+    if file.endswith('yaml'):
+        data = yaml_load(file, append_filename=True)  # dictionary
+    elif file.endswith('json'):
+        with open(file) as j_file:
+            data = json.load(j_file)
 
     # Checks
     for k in "train", "val":
@@ -299,46 +313,46 @@ def check_det_dataset(dataset, autodownload=True):
     data["names"] = check_class_names(data["names"])
 
     # Resolve paths
-    path = Path(extract_dir or data.get("path") or Path(data.get("yaml_file", "")).parent)  # dataset root
-    if not path.is_absolute():
-        path = (DATASETS_DIR / path).resolve()
+    # path = Path(extract_dir or data.get("path") or Path(data.get("yaml_file", "")).parent)  # dataset root
+    # if not path.is_absolute():
+    #     path = (DATASETS_DIR / path).resolve()
 
-    # Set paths
-    data["path"] = path  # download scripts
-    for k in "train", "val", "test", "minival":
-        if data.get(k):  # prepend path
-            if isinstance(data[k], str):
-                x = (path / data[k]).resolve()
-                if not x.exists() and data[k].startswith("../"):
-                    x = (path / data[k][3:]).resolve()
-                data[k] = str(x)
-            else:
-                data[k] = [str((path / x).resolve()) for x in data[k]]
+    # # Set paths
+    # data["path"] = path  # download scripts
+    # for k in "train", "val", "test", "minival":
+    #     if data.get(k):  # prepend path
+    #         if isinstance(data[k], str):
+    #             x = (path / data[k]).resolve()
+    #             if not x.exists() and data[k].startswith("../"):
+    #                 x = (path / data[k][3:]).resolve()
+    #             data[k] = str(x)
+    #         else:
+    #             data[k] = [str((path / x).resolve()) for x in data[k]]
 
-    # Parse YAML
-    val, s = (data.get(x) for x in ("val", "download"))
-    if val:
-        val = [Path(x).resolve() for x in (val if isinstance(val, list) else [val])]  # val path
-        if not all(x.exists() for x in val):
-            name = clean_url(dataset)  # dataset name with URL auth stripped
-            m = f"\nDataset '{name}' images not found ⚠️, missing path '{[x for x in val if not x.exists()][0]}'"
-            if s and autodownload:
-                LOGGER.warning(m)
-            else:
-                m += f"\nNote dataset download directory is '{DATASETS_DIR}'. You can update this in '{SETTINGS_YAML}'"
-                raise FileNotFoundError(m)
-            t = time.time()
-            r = None  # success
-            if s.startswith("http") and s.endswith(".zip"):  # URL
-                safe_download(url=s, dir=DATASETS_DIR, delete=True)
-            elif s.startswith("bash "):  # bash script
-                LOGGER.info(f"Running {s} ...")
-                r = os.system(s)
-            else:  # python script
-                exec(s, {"yaml": data})
-            dt = f"({round(time.time() - t, 1)}s)"
-            s = f"success ✅ {dt}, saved to {colorstr('bold', DATASETS_DIR)}" if r in {0, None} else f"failure {dt} ❌"
-            LOGGER.info(f"Dataset download {s}\n")
+    # # Parse YAML
+    # val, s = (data.get(x) for x in ("val", "download"))
+    # if val:
+    #     val = [Path(x).resolve() for x in (val if isinstance(val, list) else [val])]  # val path
+    #     if not all(x.exists() for x in val):
+    #         name = clean_url(dataset)  # dataset name with URL auth stripped
+    #         m = f"\nDataset '{name}' images not found ⚠️, missing path '{[x for x in val if not x.exists()][0]}'"
+    #         if s and autodownload:
+    #             LOGGER.warning(m)
+    #         else:
+    #             m += f"\nNote dataset download directory is '{DATASETS_DIR}'. You can update this in '{SETTINGS_YAML}'"
+    #             raise FileNotFoundError(m)
+    #         t = time.time()
+    #         r = None  # success
+    #         if s.startswith("http") and s.endswith(".zip"):  # URL
+    #             safe_download(url=s, dir=DATASETS_DIR, delete=True)
+    #         elif s.startswith("bash "):  # bash script
+    #             LOGGER.info(f"Running {s} ...")
+    #             r = os.system(s)
+    #         else:  # python script
+    #             exec(s, {"yaml": data})
+    #         dt = f"({round(time.time() - t, 1)}s)"
+    #         s = f"success ✅ {dt}, saved to {colorstr('bold', DATASETS_DIR)}" if r in {0, None} else f"failure {dt} ❌"
+    #         LOGGER.info(f"Dataset download {s}\n")
     check_font("Arial.ttf" if is_ascii(data["names"]) else "Arial.Unicode.ttf")  # download fonts
 
     return data  # dictionary
