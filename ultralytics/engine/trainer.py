@@ -508,7 +508,7 @@ class BaseTrainer:
         try:
             if self.args.task == "classify":
                 data = check_cls_dataset(self.args.data)
-            elif self.args.data.split(".")[-1] in {"yaml", "yml"} or self.args.task in {
+            elif self.args.data.split(".")[-1] in {"yaml", "yml", 'json'} or self.args.task in {
                 "detect",
                 "segment",
                 "pose",
@@ -520,6 +520,7 @@ class BaseTrainer:
         except Exception as e:
             raise RuntimeError(emojis(f"Dataset '{clean_url(self.args.data)}' error ❌ {e}")) from e
         self.data = data
+        
         return data["train"], data.get("val") or data.get("test")
 
     def setup_model(self):
