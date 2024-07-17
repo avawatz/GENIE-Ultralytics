@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import os
 from collections import defaultdict
 from itertools import repeat
 from multiprocessing.pool import ThreadPool
@@ -37,6 +38,7 @@ from .utils import (
     verify_image,
     verify_image_label,
 )
+from .file_list import FilesList
 
 # Ultralytics dataset *.cache version, >= 1.0.0 for YOLOv8
 DATASET_CACHE_VERSION = "1.0.3"
@@ -60,6 +62,12 @@ class YOLODataset(BaseDataset):
         self.use_keypoints = task == "pose"
         self.use_obb = task == "obb"
         self.data = data
+        if data.get("train"):
+            key = 'train'
+        elif data.get("train"):
+            key = "val"
+        self.im_files = FilesList(files=data[key],
+                                    project_dir=data["project_dir"])
         assert not (self.use_segments and self.use_keypoints), "Can not use both segments and keypoints."
         super().__init__(*args, **kwargs)
 
@@ -88,7 +96,6 @@ class YOLODataset(BaseDataset):
                 func=verify_image_label,
                 iterable=zip(
                     self.im_files,
-                    self.label_files,
                     repeat(self.prefix),
                     repeat(self.use_keypoints),
                     repeat(len(self.data["names"])),
@@ -103,9 +110,10 @@ class YOLODataset(BaseDataset):
                 ne += ne_f
                 nc += nc_f
                 if im_file:
+                    dir_name, file_name = os.path.split(im_file)
                     x["labels"].append(
                         {
-                            "im_file": im_file,
+                            "im_file": file_name,
                             "shape": shape,
                             "cls": lb[:, 0:1],  # n, 1
                             "bboxes": lb[:, 1:],  # n, 4
@@ -113,7 +121,7 @@ class YOLODataset(BaseDataset):
                             "keypoints": keypoint,
                             "normalized": True,
                             "bbox_format": "xywh",
-                        }
+                            "augmented": True if dir_name.endswith(f"augmented_set") else False                        }
                     )
                 if msg:
                     msgs.append(msg)
@@ -124,7 +132,8 @@ class YOLODataset(BaseDataset):
             LOGGER.info("\n".join(msgs))
         if nf == 0:
             LOGGER.warning(f"{self.prefix}WARNING ⚠️ No labels found in {path}. {HELP_URL}")
-        x["hash"] = get_hash(self.label_files + self.im_files)
+        x["project_dir"] = self.im_files.project_dir
+        x["hash"] = get_hash(self.im_files)
         x["results"] = nf, nm, ne, nc, len(self.im_files)
         x["msgs"] = msgs  # warnings
         save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
@@ -132,12 +141,11 @@ class YOLODataset(BaseDataset):
 
     def get_labels(self):
         """Returns dictionary of labels for YOLO training."""
-        self.label_files = img2label_paths(self.im_files)
-        cache_path = Path(self.label_files[0]).parent.with_suffix(".cache")
+        cache_path = Path(self.im_files[0][1]).parent.with_suffix(".cache")
         try:
             cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
             assert cache["version"] == DATASET_CACHE_VERSION  # matches current version
-            assert cache["hash"] == get_hash(self.label_files + self.im_files)  # identical hash
+            assert cache["hash"] == get_hash(self.im_files)  # identical hash
         except (FileNotFoundError, AssertionError, AttributeError):
             cache, exists = self.cache_labels(cache_path), False  # run cache ops
 
@@ -155,6 +163,7 @@ class YOLODataset(BaseDataset):
         if not labels:
             LOGGER.warning(f"WARNING ⚠️ No images found in {cache_path}, training may not work correctly. {HELP_URL}")
         self.im_files = [lb["im_file"] for lb in labels]  # update im_files
+        self.project_dir = cache['project_dir']
 
         # Check if the dataset is all boxes or all segments
         lengths = ((len(lb["cls"]), len(lb["bboxes"]), len(lb["segments"])) for lb in labels)
@@ -244,7 +253,6 @@ class YOLODataset(BaseDataset):
             new_batch["batch_idx"][i] += i  # add target image index for build_targets()
         new_batch["batch_idx"] = torch.cat(new_batch["batch_idx"], 0)
         return new_batch
-
 
 class YOLOMultiModalDataset(YOLODataset):
     """
