@@ -18,14 +18,14 @@ class FilesList(Sequence):
             aug_idx = -1
         else:
             aug_idx = len(out)
-            out.extend(files['augmented_set'])
+            out.extend(files.pop('augmented_set'))
         return out, aug_idx
 
     def __getitem__(self, idx, ann=False):
         if idx < 0:
             raise IndexError("Negative indexing is not allowed")
         name, _ = os.path.splitext(self.files[idx])
-        if idx >= self.aug_idx:
+        if self.aug_idx != -1 and idx >= self.aug_idx:
             return (os.path.join(self.project_dir, "augmented_set", self.files[idx]),
                     os.path.join(self.project_dir, "annotations", f"{name}.json"))
         else:
