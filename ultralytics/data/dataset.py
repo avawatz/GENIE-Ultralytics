@@ -63,10 +63,10 @@ class YOLODataset(BaseDataset):
         self.use_obb = task == "obb"
         self.data = data
         if data.get("train"):
-            key = 'train'
-        elif data.get("train"):
-            key = "val"
-        self.im_files = FilesList(files=data[key],
+            self.key = 'train'
+        else:
+            assert False
+        self.im_files = FilesList(files=data[self.key],
                                     project_dir=data["project_dir"])
         assert not (self.use_segments and self.use_keypoints), "Can not use both segments and keypoints."
         super().__init__(*args, **kwargs)
@@ -136,18 +136,20 @@ class YOLODataset(BaseDataset):
         x["hash"] = get_hash(self.im_files)
         x["results"] = nf, nm, ne, nc, len(self.im_files)
         x["msgs"] = msgs  # warnings
-        save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
+        x["version"] = DATASET_CACHE_VERSION  # matches current version
+        # save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
         return x
 
     def get_labels(self):
         """Returns dictionary of labels for YOLO training."""
-        cache_path = Path(self.im_files[0][1]).parent.with_suffix(".cache")
-        try:
-            cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
-            assert cache["version"] == DATASET_CACHE_VERSION  # matches current version
-            assert cache["hash"] == get_hash(self.im_files)  # identical hash
-        except (FileNotFoundError, AssertionError, AttributeError):
-            cache, exists = self.cache_labels(cache_path), False  # run cache ops
+        cache_path = Path(os.path.join(os.path.dirname(self.im_files[0][1]),
+                                       f"{str(self.prefix).strip()[:-1]}.cache"))
+        # try:
+        #     cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
+        #     assert cache["version"] == DATASET_CACHE_VERSION  # matches current version
+        #     assert cache["hash"] == get_hash(self.im_files)  # identical hash
+        # except (FileNotFoundError, AssertionError, AttributeError):
+        cache, exists = self.cache_labels(cache_path), False  # run cache ops
 
         # Display cache
         nf, nm, ne, nc, n = cache.pop("results")  # found, missing, empty, corrupt, total
