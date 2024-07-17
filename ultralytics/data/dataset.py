@@ -62,14 +62,21 @@ class YOLODataset(BaseDataset):
         self.use_keypoints = task == "pose"
         self.use_obb = task == "obb"
         self.data = data
-        if data.get("train"):
-            key = 'train'
-        elif data.get("train"):
+
+        if "train" in kwargs['prefix']:
+            key = "train"
+        elif "val" in kwargs['prefix']:
             key = "val"
-        self.im_files = FilesList(files=data[key],
+        else:
+            raise ValueError("Manual")
+        # print("FDF", data[key])
+        self.im_files = FilesList(files=self.data[key],
                                     project_dir=data["project_dir"])
         assert not (self.use_segments and self.use_keypoints), "Can not use both segments and keypoints."
         super().__init__(*args, **kwargs)
+        # print(data[key])
+        # print(f"I - {key} SET", sum([len(i) for i in data[key].values()]), self.prefix)
+
 
     def cache_labels(self, path=Path("./labels.cache")):
         """
@@ -133,21 +140,22 @@ class YOLODataset(BaseDataset):
         if nf == 0:
             LOGGER.warning(f"{self.prefix}WARNING ⚠️ No labels found in {path}. {HELP_URL}")
         x["project_dir"] = self.im_files.project_dir
-        x["hash"] = get_hash(self.im_files)
+        # x["hash"] = get_hash(self.im_files)
         x["results"] = nf, nm, ne, nc, len(self.im_files)
-        x["msgs"] = msgs  # warnings
-        save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
+        # x["msgs"] = msgs  # warnings
+        # x['version'] = DATASET_CACHE_VERSION
+        # save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
         return x
 
     def get_labels(self):
         """Returns dictionary of labels for YOLO training."""
         cache_path = Path(self.im_files[0][1]).parent.with_suffix(".cache")
-        try:
-            cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
-            assert cache["version"] == DATASET_CACHE_VERSION  # matches current version
-            assert cache["hash"] == get_hash(self.im_files)  # identical hash
-        except (FileNotFoundError, AssertionError, AttributeError):
-            cache, exists = self.cache_labels(cache_path), False  # run cache ops
+        # try:
+        #     cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
+        #     assert cache["version"] == DATASET_CACHE_VERSION  # matches current version
+        #     assert cache["hash"] == get_hash(self.im_files)  # identical hash
+        # except (FileNotFoundError, AssertionError, AttributeError):
+        cache, exists = self.cache_labels(cache_path), False  # run cache ops
 
         # Display cache
         nf, nm, ne, nc, n = cache.pop("results")  # found, missing, empty, corrupt, total
@@ -158,7 +166,7 @@ class YOLODataset(BaseDataset):
                 LOGGER.info("\n".join(cache["msgs"]))  # display warnings
 
         # Read cache
-        [cache.pop(k) for k in ("hash", "version", "msgs")]  # remove items
+        # [cache.pop(k) for k in ("hash", "version", "msgs")]  # remove items
         labels = cache["labels"]
         if not labels:
             LOGGER.warning(f"WARNING ⚠️ No images found in {cache_path}, training may not work correctly. {HELP_URL}")
