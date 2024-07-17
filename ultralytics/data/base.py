@@ -91,8 +91,8 @@ class BaseDataset(Dataset):
         self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
         self.npy_files = []
         self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
-        if (self.cache == "ram" and self.check_cache_ram()) or self.cache == "disk":
-            self.cache_images()
+        # if (self.cache == "ram" and self.check_cache_ram()) or self.cache == "disk":
+        #     self.cache_images()
 
         # Transforms
         self.transforms = self.build_transforms(hyp=hyp)
