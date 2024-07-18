@@ -7,6 +7,7 @@ from ultralytics.cfg import get_cfg
 from ultralytics.utils import LOGGER
 import torch
 import numpy as np
+from pathlib import Path
 
 class DetectionPredictor(BasePredictor):
     """
@@ -23,7 +24,6 @@ class DetectionPredictor(BasePredictor):
         ```
     """
     
-
     def _calculate_grad_emb(self, preds, img, orig_imgs):
         """Post-processes predictions and returns a list of Results objects."""
         nms_preds = ops.non_max_suppression(
@@ -81,24 +81,39 @@ class DetectionPredictor(BasePredictor):
                 setattr(self.model.model.args, 'dfl', 1.5)
 
         self.model.model.end2end=False
+        nc = self.model.model.model[-1].nc
+        reg_max = self.model.model.model[-1].reg_max
+        no = nc + reg_max * 4
+        print(nc, reg_max, no)
+        # print(preds)
+        # print(preds[0].grad_fn)
+        # print(dir(self.model))
         # print(self.model.model.model[-1].reg_max)
-        print(preds[0].shape)
-        print([i.shape for i in preds[-1]])
+        # print(preds[0].shape)
+        # print([i.shape for i in preds[-1]])
         # print(self.device)
-        
-        
-        
+        # print(self.model.model.nc)
+        # feats = preds[-1]
+        # print([xi.view(feats[0].shape[0], no, -1).shape for xi in feats])
+
+        # print(pred_distri.shape, temp.shape, pred_distri.grad_fn)
         loss, _ = self.model.model.loss(preds=tuple(preds), batch=pred_dict)
-        grad = torch.autograd.grad(loss, preds[-1][0])
+        grad = torch.autograd.grad(loss, preds[-1])
+        _, grad = torch.cat([xi.view(grad[0].shape[0], no, -1) for xi in grad], 2).split(
+            (reg_max * 4, nc), 1
+        )
+        # print(pred_conf.shape)
         del preds
         torch.cuda.empty_cache()
-        grad = torch.cat(grad, dim=0).detach()
+        # grad = torch.cat(grad, dim=0).detach()
         assert grad.shape[-2] == self.model.model.nc
-        grad = torch.mean(grad, axis=-1)
+        # print([grad].shape)
+        # grad = torch.mean(grad, axis=-1)
         # print("PIT ", grad.shape)
         # print("OUT: ", torch.mean(grad, dim=-1))
+        print(grad.reshape(grad.shape[0], -1).shape)
 
-        return grad
+        return grad.detach()
 
 
     def switch_model_gradient(self, enable: bool):
@@ -115,8 +130,8 @@ class DetectionPredictor(BasePredictor):
             LOGGER.info("")
 
         # Setup model
-        if not self.model:
-            self.setup_model(model)
+        # if not isinstance(self.model, torch.nn.Module):
+        self.setup_model(model)
         self.switch_model_gradient(enable=True)
 
         with self._lock:  # for thread-safe inference
@@ -181,6 +196,7 @@ class DetectionPredictor(BasePredictor):
             else:
                 self.switch_model_gradient(enable=False)
                 print("CLEARED")
+                self.grad_emb = False
                 self.results = None
                 torch.cuda.empty_cache()
 
