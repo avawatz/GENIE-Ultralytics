@@ -1,5 +1,6 @@
 import copy
 from datetime import datetime
+import os
 from typing import Callable, Dict, Optional, Union
 
 from packaging import version
@@ -238,7 +239,10 @@ class WandBUltralyticsCallback:
         self.predictor.args.verbose = None
 
     def _save_model(self, trainer: TRAINER_TYPE):
-        model_checkpoint_artifact = wandb.Artifact(f"run_{wandb.run.id}_model", "model")
+        model_name = os.path.splitext(trainer.args.model)[0]
+        model_checkpoint_artifact = wandb.Artifact(f"run_{wandb.run.id}_model", 
+                                                    "model",
+                                                     metadata={"model": f"{model_name[:4].upper() + model_name[4:]}"})
         model_checkpoint_artifact.add_file(str(trainer.best))
         wandb.log_artifact(
             model_checkpoint_artifact, aliases=[f"epoch_{trainer.epoch}", "best"]
