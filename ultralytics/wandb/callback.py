@@ -49,20 +49,20 @@ try:
     except ModuleNotFoundError:
         from ultralytics.utils import RANK, __version__
 
-    from wandb.integration.ultralytics.bbox_utils import (
+    from .bbox_utils import (
         plot_bbox_predictions,
         plot_detection_validation_results,
     )
-    from wandb.integration.ultralytics.classification_utils import (
+    from .classification_utils import (
         plot_classification_predictions,
         plot_classification_validation_results,
     )
-    from wandb.integration.ultralytics.mask_utils import (
+    from .mask_utils import (
         plot_mask_predictions,
         plot_sam_predictions,
         plot_segmentation_validation_results,
     )
-    from wandb.integration.ultralytics.pose_utils import (
+    from .pose_utils import (
         plot_pose_predictions,
         plot_pose_validation_results,
     )
