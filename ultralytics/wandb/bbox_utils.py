@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, Tuple, Union
+import os
 
 import torch
 from tqdm.auto import tqdm
@@ -33,7 +34,8 @@ def scale_bounding_box_to_original_image_shape(
 
 
 def get_ground_truth_bbox_annotations(
-    img_idx: int, image_path: str, batch: Dict, class_name_map: Dict = None
+    img_idx: int, image_path: str, batch: Dict, class_name_map: Dict = None, 
+    rescale: bool = True
 ) -> List[Dict[str, Any]]:
     """Get ground truth bounding box annotation data in the form required for `wandb.Image` overlay system."""
     indices = batch["batch_idx"] == img_idx
@@ -58,9 +60,15 @@ def get_ground_truth_bbox_annotations(
 
     data = []
     for box, label in zip(bboxes, cls_labels):
-        box = scale_bounding_box_to_original_image_shape(
-            box, resized_image_shape, original_image_shape, ratio_pad
-        )
+        if rescale:
+            box = scale_bounding_box_to_original_image_shape(
+                box, resized_image_shape, original_image_shape, ratio_pad
+            )
+        else:
+            box = ops.xywhn2xyxy(box, 
+                                 h=resized_image_shape[0], 
+                                 w=resized_image_shape[1])
+            box = ops.xyxy2xywh(box).tolist()
         data.append(
             {
                 "position": {
@@ -162,7 +170,8 @@ def plot_detection_validation_results(
     num_dataloader_batches = len(dataloader.dataset) // dataloader.batch_size
     max_validation_batches = min(max_validation_batches, num_dataloader_batches)
     for batch_idx, batch in enumerate(dataloader):
-        prediction_results = predictor(batch["im_file"])
+        print(batch.keys())
+        prediction_results = predictor(batch['img'] / 255)
         progress_bar_result_iterable = tqdm(
             enumerate(prediction_results),
             total=len(prediction_results),
@@ -175,10 +184,10 @@ def plot_detection_validation_results(
             )
             try:
                 ground_truth_data = get_ground_truth_bbox_annotations(
-                    img_idx, batch["im_file"][img_idx], batch, class_label_map
+                    img_idx, batch['im_file'][img_idx], batch, class_label_map, rescale=False
                 )
                 wandb_image = wandb.Image(
-                    batch["im_file"][img_idx],
+                    batch['img'][img_idx].permute(-1, -2, -3).numpy(),
                     boxes={
                         "ground-truth": {
                             "box_data": ground_truth_data,
