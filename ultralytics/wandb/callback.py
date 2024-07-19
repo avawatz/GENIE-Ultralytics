@@ -152,6 +152,7 @@ class WandBUltralyticsCallback:
         self.prompts = None
         self.run_id = None
         self.train_epoch = None
+        self.b_fitness = 0
 
     def _make_tables(self):
         if self.task in ["detect", "segment"]:
@@ -238,22 +239,9 @@ class WandBUltralyticsCallback:
 
     def _save_model(self, trainer: TRAINER_TYPE):
         model_checkpoint_artifact = wandb.Artifact(f"run_{wandb.run.id}_model", "model")
-        checkpoint_dict = {
-            "epoch": trainer.epoch,
-            "best_fitness": trainer.best_fitness,
-            "model": copy.deepcopy(de_parallel(self.model)).half(),
-            "ema": copy.deepcopy(trainer.ema.ema).half(),
-            "updates": trainer.ema.updates,
-            "optimizer": trainer.optimizer.state_dict(),
-            "train_args": vars(trainer.args),
-            "date": datetime.now().isoformat(),
-            "version": __version__,
-        }
-        checkpoint_path = trainer.wdir / f"epoch{trainer.epoch}.pt"
-        torch.save(checkpoint_dict, checkpoint_path, pickle_module=pickle)
-        model_checkpoint_artifact.add_file(checkpoint_path)
+        model_checkpoint_artifact.add_file(str(trainer.best))
         wandb.log_artifact(
-            model_checkpoint_artifact, aliases=[f"epoch_{trainer.epoch}"]
+            model_checkpoint_artifact, aliases=[f"epoch_{trainer.epoch}", "best"]
         )
 
     def on_train_start(self, trainer: TRAINER_TYPE):
@@ -266,11 +254,11 @@ class WandBUltralyticsCallback:
     def on_fit_epoch_end(self, trainer: DetectionTrainer):
         if self.task in self.supported_tasks and self.train_epoch != trainer.epoch:
             self.train_epoch = trainer.epoch
+            self.device = next(trainer.model.parameters()).device
             if (self.train_epoch + 1) % self.epoch_logging_interval == 0:
                 validator = trainer.validator
                 dataloader = validator.dataloader
                 class_label_map = validator.names
-                self.device = next(trainer.model.parameters()).device
                 if isinstance(trainer.model, torch.nn.parallel.DistributedDataParallel):
                     model = trainer.model.module
                 else:
@@ -319,8 +307,9 @@ class WandBUltralyticsCallback:
                             epoch=trainer.epoch,
                         )
                     )
-            if self.enable_model_checkpointing:
+            if self.enable_model_checkpointing and self.b_fitness < trainer.best_fitness and (self.train_epoch + 1) % self.epoch_logging_interval == 0:
                 self._save_model(trainer)
+                self.b_fitness = trainer.best_fitness
             trainer.model.to(self.device)
 
     def on_train_end(self, trainer: TRAINER_TYPE):
@@ -436,10 +425,10 @@ class WandBUltralyticsCallback:
 def add_wandb_callback(
     model: YOLO,
     epoch_logging_interval: int = 1,
-    enable_model_checkpointing: bool = False,
+    enable_model_checkpointing: bool = True,
     enable_train_validation_logging: bool = True,
-    enable_validation_logging: bool = True,
-    enable_prediction_logging: bool = True,
+    enable_validation_logging: bool = False,
+    enable_prediction_logging: bool = False,
     max_validation_batches: Optional[int] = 1,
     visualize_skeleton: Optional[bool] = True,
 ):
