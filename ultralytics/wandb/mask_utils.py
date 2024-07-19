@@ -8,7 +8,7 @@ from ultralytics.models.yolo.segment import SegmentationPredictor
 from ultralytics.utils.ops import scale_image
 
 import wandb
-from wandb.integration.ultralytics.bbox_utils import (
+from .bbox_utils import (
     get_ground_truth_bbox_annotations,
     get_mean_confidence_map,
 )
