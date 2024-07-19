@@ -8,7 +8,7 @@ from ultralytics.models.yolo.pose import PosePredictor
 from ultralytics.utils.plotting import Annotator
 
 import wandb
-from wandb.integration.ultralytics.bbox_utils import (
+from .bbox_utils import (
     get_boxes,
     get_ground_truth_bbox_annotations,
 )
