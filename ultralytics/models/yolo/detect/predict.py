@@ -84,7 +84,8 @@ class DetectionPredictor(BasePredictor):
         nc = self.model.model.model[-1].nc
         reg_max = self.model.model.model[-1].reg_max
         no = nc + reg_max * 4
-        print(nc, reg_max, no)
+        # print(nc, reg_max, no)
+
         # print(preds)
         # print(preds[0].grad_fn)
         # print(dir(self.model))
@@ -205,7 +206,7 @@ class DetectionPredictor(BasePredictor):
         """Performs inference on an image or stream."""
         self.stream = stream
         self.grad_emb = grad_emb
-        print("GRAD_EMB: ", grad_emb)
+        # print("GRAD_EMB: ", grad_emb)
         if stream:
             if grad_emb:
                 return self.stream_grad_emb(source, model, *args, **kwargs)
