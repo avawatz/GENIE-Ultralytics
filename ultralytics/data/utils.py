@@ -126,14 +126,17 @@ def verify_image_label(args):
                 # lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
                 if lb.get('segments', None) is not None and (not keypoint):  # is segment
                     classes = np.array(lb['class_ids'], dtype=np.float32)
-                    segments = [np.array(lb['segments'], dtype=np.float32).reshape(-1, 2)]  # (cls, xy1...)
+                    segments = [(np.array(segment).reshape(-1, 2) / np.array(im.size[:2])) for segment in lb['segments']]
                     lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
-                iterator = zip(lb.pop('class_ids'), lb.pop('bboxes'))
-                lb = list()
-                for cls_id, bbox in iterator:
-                    bbox = list(pbx.convert_bbox(bbox, from_type="voc", to_type="yolo", image_size=im.size[:2]))
-                    lb.append([cls_id] + bbox)
-                lb = np.array(lb, dtype=np.float32)
+                elif lb.get('bboxes', None) is not None:
+                    iterator = zip(lb.pop('class_ids'), lb.pop('bboxes'))
+                    lb = list()
+                    for cls_id, bbox in iterator:
+                        bbox = list(pbx.convert_bbox(bbox, from_type="voc", to_type="yolo", image_size=im.size[:2]))
+                        lb.append([cls_id] + bbox)
+                    lb = np.array(lb, dtype=np.float32)
+                else:
+                    raise ValueError("Logic Error")
             nl = len(lb)
             if nl:
                 if keypoint:
