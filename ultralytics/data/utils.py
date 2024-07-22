@@ -128,7 +128,7 @@ def verify_image_label(args):
                     classes = np.array(lb['class_ids'], dtype=np.float32)
                     segments = [(np.array(segment).reshape(-1, 2) / np.array(im.size[:2])) for segment in lb['segments']]
                     lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
-                elif lb.get('bboxes', None) is not None:
+                elif lb.get('bboxes', None) is not None and (not keypoint):
                     iterator = zip(lb.pop('class_ids'), lb.pop('bboxes'))
                     lb = list()
                     for cls_id, bbox in iterator:
