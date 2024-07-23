@@ -142,7 +142,7 @@ class SegmentationPredictor(DetectionPredictor):
         if self.grad_emb:
             return self._calculate_grad_emb(preds, img, orig_imgs)
 
-        p = ops.non_max_suppression(
+        p, probs = ops.non_max_suppression(
             preds[0],
             self.args.conf,
             self.args.iou,
@@ -150,6 +150,7 @@ class SegmentationPredictor(DetectionPredictor):
             max_det=self.args.max_det,
             nc=len(self.model.names),
             classes=self.args.classes,
+            return_probs=True
         )
 
         if not isinstance(orig_imgs, list):  # input images are a torch.Tensor, not a list
@@ -157,7 +158,8 @@ class SegmentationPredictor(DetectionPredictor):
 
         results = []
         proto = preds[1][-1] if isinstance(preds[1], tuple) else preds[1]  # tuple if PyTorch model or array if exported
-        for i, pred in enumerate(p):
+        assert len(proto) == len(probs)
+        for i, (pred, prob) in enumerate(zip(p, probs)):
             orig_img = orig_imgs[i]
             img_path = self.batch[0][i]
             print(pred.shape)
@@ -169,5 +171,12 @@ class SegmentationPredictor(DetectionPredictor):
             else:
                 masks = ops.process_mask(proto[i], pred[:, 6:], pred[:, :4], img.shape[2:], upsample=True)  # HWC
                 pred[:, :4] = ops.scale_boxes(img.shape[2:], pred[:, :4], orig_img.shape)
-            results.append(Results(orig_img, path=img_path, names=self.model.names, boxes=pred[:, :6], masks=masks))
+            results.append(Results(orig_img, path=img_path, names=self.model.names, boxes=pred[:, :6], masks=masks, all_probs=prob))
+
+        if not len(results):
+            orig_img = orig_imgs[0]
+            img_path = self.batch[0][0]
+            results.append(Results(orig_img, path=img_path, names=self.model.names, boxes=None,
+            all_probs=torch.tensor([])))
+
         return results
